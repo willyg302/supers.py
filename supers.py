@@ -1,5 +1,6 @@
 import json
 import collections
+import re
 
 
 __version__ = '0.1.0'
@@ -11,28 +12,48 @@ __all__ = ['NotifyDict', 'NotifyList', 'watch', 'unwatch']
 class NotifyBase(object):
 
 	def __init__(self):
-		self._listeners = []  # @TODO: Keep track of type/path filter
+		self._listeners = {}  # Dict of listener lists, keyed by event
 
 	def on(self, event, listener):
 		if listener is not None:
-			self._listeners.append(listener)
+			self._listeners.setdefault(event, []).append(listener)
 		return self
 
-	def _notify(self, type, name):
-		# @TODO: Only call listeners filtered by type/path
-		for listener in self._listeners:
-			listener({
-				'object': self,
-				'type': type,
-				'name': name
-			})
+	def _notify(self, type, name, path, value, oldvalue):
+		for event, listeners in self._listeners.iteritems():
+			try:
+				type_filter, path_filter = event.split(' ', 1)
+			except ValueError:
+				type_filter, path_filter = event, ''
+			if type != type_filter and type_filter != 'change':
+				continue
+			re_path = '.' + '.'.join([str(v) for v in path])
+			path_filter = path_filter.replace('.', '\.').replace('[', '\.').replace(']', '') + '.*'
+			if not re.search(path_filter, re_path):
+				continue
+			for listener in listeners:
+				listener({
+					'object': self,
+					'type': type,
+					'name': name,
+					'path': path,
+					'value': value,
+					'oldvalue': oldvalue
+				})
 
 	def _listen(self, record):
-		# @TODO: Modify to add information about "bubbling up"
-		self._notify(record['type'], record['name'])
+		if isinstance(self, NotifyDict):
+			subpath = self._dict.keys()[self._dict.values().index(record['object'])]
+		elif isinstance(self, NotifyList):
+			subpath = self._list.index(record['object'])
+		record['path'].insert(0, subpath)
+		self._notify(record['type'], record['name'], record['path'], record['value'], record['oldvalue'])
 
 	def to_json(self, **options):
 		return json.dumps(unwatch(self), **options)
+
+	def path(self, path):
+		return reduce(lambda d, k: d[k], path, self)
 
 
 class NotifyDict(collections.MutableMapping, NotifyBase):
@@ -54,12 +75,14 @@ class NotifyDict(collections.MutableMapping, NotifyBase):
 		return self._dict[key]
 
 	def __setitem__(self, key, value):
+		oldvalue = self._dict[key] if key in self._dict else None
 		self._dict[key] = watch(value, self._listen)
-		self._notify('__setitem__', key)  # @TODO: Full record
+		self._notify('set', key, [key], value, oldvalue)
 
 	def __delitem__(self, key):
+		oldvalue = self._dict[key]
 		del self._dict[key]
-		self._notify('__delitem__', key)  # @TODO: Full record
+		self._notify('delete', key, [key], None, oldvalue)
 
 	def to_dict(self):
 		return unwatch(self)
@@ -87,12 +110,18 @@ class NotifyList(collections.MutableSequence, NotifyBase):
 		return self._list[index]
 
 	def __setitem__(self, index, value):
+		oldvalue = self._list[index]
 		self._list[index] = watch(value, self._listen)
-		self._notify('__setitem__', index)  # @TODO: Full record
+		self._notify('set', index, [index], value, oldvalue)
 
 	def __delitem__(self, index):
+		oldvalue = self._list[index]
 		del self._list[index]
-		self._notify('__delitem__', index)  # @TODO: Full record
+		self._notify('delete', index, [index], None, oldvalue)
+
+	def insert(self, index, value):
+		self._list.insert(index, watch(value, self._listen))
+		self._notify('insert', index, [index], value, None)
 
 	def to_list(self):
 		return unwatch(self)
@@ -104,23 +133,21 @@ class NotifyList(collections.MutableSequence, NotifyBase):
 		return watch(l)
 
 
-
-def watch(x, listener=None, event='change .*'):
+def watch(x, listener=None, event='change'):
 	if isinstance(x, (NotifyDict, NotifyList)):
 		return x.on(event, listener)
 	elif isinstance(x, dict):
 		n = NotifyDict()
 		for k, v in dict.iteritems(x):
-			n[k] = watch(v, n._listen)
+			n[k] = v
 		return n.on(event, listener)
 	elif isinstance(x, list):
 		n = NotifyList()
 		for v in x:
-			n.append(watch(v, n._listen))
+			n.append(v)
 		return n.on(event, listener)
 	else:
 		return x
-
 
 def unwatch(x):
 	if isinstance(x, NotifyDict):
@@ -128,7 +155,7 @@ def unwatch(x):
 	elif isinstance(x, NotifyList):
 		x = x._list
 	if isinstance(x, dict):
-		return dict((k, unwatch(v)) for k, v in dict.iteritems(x))
+		return dict((k, unwatch(v)) for k, v in x.iteritems())
 	elif isinstance(x, list):
 		return list(unwatch(v) for v in x)
 	else:
@@ -137,15 +164,34 @@ def unwatch(x):
 
 if __name__ == "__main__":
 	def p(record):
-		print record
+		print '{} {} --> {} on path {}'.format(record['type'], record['oldvalue'], record['value'], record['path'])
+
+	def q(record):
+		print 'I only happen on deletes!'
+
+	def r(record):
+		print 'I only happen on path {}!'.format(record['path'])
 
 	d = {'a': 1, 'b': 2, 'd': {'e': 5, 'f': 6}}
 	#n = watch(d, p)
 	#n['c'] = 3
 	#del n['d']['e']
 
-	n2 = NotifyDict.from_dict(d)
-	n2.on('change .*', p)
-	n2['x'] = {'y': 8, 'z': 9}
-	n2['x']['z'] = 10
-	del n2['x']
+	#n2 = NotifyDict.from_dict(d)
+	#n2.on('change .*', p)
+	#n2['x'] = {'y': 8, 'z': 9}
+	#n2['x']['z'] = 10
+	#del n2['x']
+
+	l = [1, 'b', {'a': 'a', 'b': ['c', 'd', 'e']}, 2009]
+
+	n = watch(l, p)
+	n.on('delete', q)
+	n.on('change [1].b', r)
+	del n[1]
+	n[1]['c'] = 'Hello!'
+	n[2] -= 1
+	n[1]['b'][2] += 'lephant'
+
+	del n[1]
+	n.insert(0, 'puppies')

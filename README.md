@@ -15,6 +15,8 @@ Watch JSON objects like James Bond. This boils down to the problem of observing 
     'oldvalue'
 }
 
+event is `[type] [path]`, where type is one of change (matches all), set, delete, or insert. And path is a regex string. `.*` matches everything.
+
 ## Credits
 
 - [Reactive-Py](https://github.com/deepanshumehndiratta/reactive-py/blob/master/src/reactive.py)

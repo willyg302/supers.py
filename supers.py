@@ -1,24 +1,3 @@
-'''
-supers.py: Watch JSON objects like James Bond.
-
-This boils down to the problem of observing changes in nested dicts and lists.
-
-
-
-
-
-If the object is a dict, we notify of the changed key/value pair
-If it's a list, notify of the changed index.
-
-We have to bubble up
-
-
-References:
- - https://github.com/deepanshumehndiratta/reactive-py/blob/master/src/reactive.py
- - https://github.com/sdemircan/editobj2/blob/master/observe.py
- - https://github.com/dsc/bunch
-'''
-
 import json
 import collections
 
@@ -26,20 +5,34 @@ import collections
 __version__ = '0.1.0'
 VERSION = tuple(map(int, __version__.split('.')))
 
-__all__ = ['NotifyDict', 'NotifyList']
+__all__ = ['NotifyDict', 'NotifyList', 'watch', 'unwatch']
 
 
 class NotifyBase(object):
 
 	def __init__(self):
-		self._listeners = []
+		self._listeners = []  # @TODO: Keep track of type/path filter
 
-	def add_listener(self, listener):
-		self._listeners.append(listener)
+	def on(self, event, listener):
+		if listener is not None:
+			self._listeners.append(listener)
+		return self
 
-	def _notify(self):
+	def _notify(self, type, name):
+		# @TODO: Only call listeners filtered by type/path
 		for listener in self._listeners:
-			listener()
+			listener({
+				'object': self,
+				'type': type,
+				'name': name
+			})
+
+	def _listen(self, record):
+		# @TODO: Modify to add information about "bubbling up"
+		self._notify(record['type'], record['name'])
+
+	def to_json(self, **options):
+		return json.dumps(unwatch(self), **options)
 
 
 class NotifyDict(collections.MutableMapping, NotifyBase):
@@ -61,20 +54,21 @@ class NotifyDict(collections.MutableMapping, NotifyBase):
 		return self._dict[key]
 
 	def __setitem__(self, key, value):
-		self._dict[key] = value
-		self._notify()
+		self._dict[key] = watch(value, self._listen)
+		self._notify('__setitem__', key)  # @TODO: Full record
 
 	def __delitem__(self, key):
 		del self._dict[key]
-		self._notify()
+		self._notify('__delitem__', key)  # @TODO: Full record
 
-	def to_dict():
-		# @TODO: This is not recursive (_dict may contain Notify objects)
-		return self._dict
+	def to_dict(self):
+		return unwatch(self)
 
-	def to_json(self, **options):
-		# @TODO: This is not recursive (_dict may contain Notify objects)
-		return json.dumps(self._dict, **options)
+	@staticmethod
+	def from_dict(d):
+		if not isinstance(d, dict):
+			raise TypeError('You must pass a dict!')
+		return watch(d)
 
 
 class NotifyList(collections.MutableSequence, NotifyBase):
@@ -93,66 +87,65 @@ class NotifyList(collections.MutableSequence, NotifyBase):
 		return self._list[index]
 
 	def __setitem__(self, index, value):
-		self._list[index] = value
+		self._list[index] = watch(value, self._listen)
+		self._notify('__setitem__', index)  # @TODO: Full record
 
 	def __delitem__(self, index):
 		del self._list[index]
+		self._notify('__delitem__', index)  # @TODO: Full record
 
-	def to_list():
-		# @TODO: This is not recursive (_list may contain Notify objects)
-		return self._list
-
-	def to_json(self, **options):
-		# @TODO: This is not recursive (_list may contain Notify objects)
-		return json.dumps(self._list, **options)
-
-
-"""
-
-	def to_dict(self):
-		'''For a Fiber f, `f.to_dict()` is an alias for `unfiberify(f)`.'''
-		return unfiberify(self)
+	def to_list(self):
+		return unwatch(self)
 
 	@staticmethod
-	def from_dict(d):
-		'''For a dictionary d, `Fiber.from_dict(d)` is an alias for `fiberify(d)`.'''
-		return fiberify(d)
-
-	def toJSON(self, **options):
-		'''Serializes this Fiber to JSON. Accepts the same keyword options as `json.dumps()`.'''
-		return json.dumps(self, **options)
+	def from_list(l):
+		if not isinstance(l, list):
+			raise TypeError('You must pass a list!')
+		return watch(l)
 
 
-def fiberify(x):
-	'''Recursively converts a dictionary into a Fiber.'''
-	if isinstance(x, dict):
-		return Fiber((k, fiberify(v)) for k, v in dict.iteritems(x))
+
+def watch(x, listener=None, event='change .*'):
+	if isinstance(x, (NotifyDict, NotifyList)):
+		return x.on(event, listener)
+	elif isinstance(x, dict):
+		n = NotifyDict()
+		for k, v in dict.iteritems(x):
+			n[k] = watch(v, n._listen)
+		return n.on(event, listener)
 	elif isinstance(x, list):
-		return list(fiberify(v) for v in x)
+		n = NotifyList()
+		for v in x:
+			n.append(watch(v, n._listen))
+		return n.on(event, listener)
 	else:
 		return x
 
-def unfiberify(x):
-	'''Recursively converts a Fiber into a dctionary.'''
+
+def unwatch(x):
+	if isinstance(x, NotifyDict):
+		x = x._dict
+	elif isinstance(x, NotifyList):
+		x = x._list
 	if isinstance(x, dict):
-		return dict((k, unfiberify(v)) for k, v in dict.iteritems(x))
+		return dict((k, unwatch(v)) for k, v in dict.iteritems(x))
 	elif isinstance(x, list):
-		return list(unfiberify(v) for v in x)
+		return list(unwatch(v) for v in x)
 	else:
 		return x
 
-"""
 
 if __name__ == "__main__":
-	n = NotifyDict()
+	def p(record):
+		print record
 
-	def p():
-		print 'Hello'
-	def w():
-		print 'World!'
+	d = {'a': 1, 'b': 2, 'd': {'e': 5, 'f': 6}}
+	#n = watch(d, p)
+	#n['c'] = 3
+	#del n['d']['e']
 
-	n.add_listener(p)
-	n.add_listener(w)
-	n[2] = 3
-	del n[2]
-	print n
+	n2 = NotifyDict.from_dict(d)
+	n2.on('change .*', p)
+	n2['x'] = {'y': 8, 'z': 9}
+	n2['x']['z'] = 10
+	del n2['x']

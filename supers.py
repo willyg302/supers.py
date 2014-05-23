@@ -160,38 +160,3 @@ def unwatch(x):
 		return list(unwatch(v) for v in x)
 	else:
 		return x
-
-
-if __name__ == "__main__":
-	def p(record):
-		print '{} {} --> {} on path {}'.format(record['type'], record['oldvalue'], record['value'], record['path'])
-
-	def q(record):
-		print 'I only happen on deletes!'
-
-	def r(record):
-		print 'I only happen on path {}!'.format(record['path'])
-
-	d = {'a': 1, 'b': 2, 'd': {'e': 5, 'f': 6}}
-	#n = watch(d, p)
-	#n['c'] = 3
-	#del n['d']['e']
-
-	#n2 = NotifyDict.from_dict(d)
-	#n2.on('change .*', p)
-	#n2['x'] = {'y': 8, 'z': 9}
-	#n2['x']['z'] = 10
-	#del n2['x']
-
-	l = [1, 'b', {'a': 'a', 'b': ['c', 'd', 'e']}, 2009]
-
-	n = watch(l, p)
-	n.on('delete', q)
-	n.on('change [1].b', r)
-	del n[1]
-	n[1]['c'] = 'Hello!'
-	n[2] -= 1
-	n[1]['b'][2] += 'lephant'
-
-	del n[1]
-	n.insert(0, 'puppies')

@@ -1,4 +1,4 @@
-supers.py
+![supers.py](https://rawgit.com/willyg302/supers.py/master/supers-logo.svg "Shaken, not stirred.")
 
 ---
 

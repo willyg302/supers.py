@@ -1,4 +1,4 @@
-![supers.py](https://rawgit.com/willyg302/supers.py/master/supers-logo.svg "Shaken, not stirred.")
+![supers.py](https://raw.github.com/willyg302/supers.py/master/supers-logo-922.png "Shaken, not stirred.")
 
 ---
 
